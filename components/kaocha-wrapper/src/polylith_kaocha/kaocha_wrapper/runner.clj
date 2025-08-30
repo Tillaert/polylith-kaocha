@@ -53,14 +53,18 @@
       (vector))
     (cond-> $
       (not-any? #{kaocha.report/debug} $)
-      (conj kaocha.report/debug))
-    ;; Add our enhanced error reporter
-    (conj enhanced-error-reporter)))
+      (conj kaocha.report/debug))))
 
 (defn with-verbosity [config {:keys [is-verbose]}]
   (cond-> config
     is-verbose
-    (update :kaocha/reporter with-debug-reporter)))
+    (update :kaocha/reporter with-debug-reporter)
+    ;; Always add enhanced error reporting
+    true
+    (update :kaocha/reporter (fn [reporter]
+                               (if (vector? reporter)
+                                 (conj reporter enhanced-error-reporter)
+                                 [reporter enhanced-error-reporter])))))
 
 (defn with-color [config {:keys [is-colored]}]
   (assoc config :kaocha/color? is-colored))
