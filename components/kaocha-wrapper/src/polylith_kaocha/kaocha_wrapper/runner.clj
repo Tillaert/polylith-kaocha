@@ -11,40 +11,6 @@
    [polylith-kaocha.kaocha-wrapper.config :as config]
    [slingshot.slingshot :refer [try+]]))
 
-(defn find-root-compilation-error
-  "Find the root cause compilation error in an exception chain"
-  [^Throwable ex]
-  (loop [e ex]
-    (when e
-      (let [msg (.getMessage e)]
-        (cond
-          ;; Look for specific compilation errors like "Unable to resolve symbol"
-          (and msg (str/includes? msg "Unable to resolve symbol"))
-          msg
-          
-          ;; Continue searching up the chain
-          (.getCause e)
-          (recur (.getCause e))
-          
-          ;; No more causes, return the current message
-          :else msg)))))
-
-(defn enhanced-error-reporter
-  "A reporter that provides better error messages for compilation failures"
-  [m]
-  ;; Only handle load errors, let everything else fall through
-  (when (and (= :kaocha/fail-type (:type m))
-             (= :kaocha.type/ns (:kaocha.testable/type m))
-             (:kaocha.testable/load-error m))
-    (let [load-error (:kaocha.testable/load-error m)
-          root-error (find-root-compilation-error load-error)]
-      (when (and root-error (not (str/includes? root-error "not found")))
-        (println "\n💡 Enhanced Error Info:")
-        (println "   Root cause:" root-error))))
-  
-  ;; Always call the default reporter to maintain normal behavior
-  (kaocha.report/result m))
-
 (defn with-debug-reporter [kaocha-reporter]
   (assert (s/valid? :kaocha/reporter kaocha-reporter))
   (as-> kaocha-reporter $
@@ -58,13 +24,7 @@
 (defn with-verbosity [config {:keys [is-verbose]}]
   (cond-> config
     is-verbose
-    (update :kaocha/reporter with-debug-reporter)
-    ;; Always add enhanced error reporting
-    true
-    (update :kaocha/reporter (fn [reporter]
-                               (if (vector? reporter)
-                                 (conj reporter enhanced-error-reporter)
-                                 [reporter enhanced-error-reporter])))))
+    (update :kaocha/reporter with-debug-reporter)))
 
 (defn with-color [config {:keys [is-colored]}]
   (assoc config :kaocha/color? is-colored))
@@ -107,12 +67,25 @@
         (doto (verbose-prn "kaocha/early-exit" opts))
         (:kaocha/early-exit)))))
 
+(defn find-compilation-error 
+  "Extract compilation error from exception chain"
+  [^Throwable e]
+  (loop [ex e]
+    (when ex
+      (let [msg (.getMessage ex)]
+        (if (and msg (str/includes? msg "Unable to resolve symbol"))
+          msg
+          (recur (.getCause ex)))))))
+
 (defn run-tests [opts]
   (try
     (->
       (run-tests-with-kaocha opts)
       (doto (verbose-prn "run-tests-with-kaocha" opts)))
     (catch Throwable e
+      (when-let [comp-error (find-compilation-error e)]
+        (println "\n💡 Compilation Error Detected:")
+        (println "   " comp-error))
       (-> e
         (doto (verbose-prn "run-tests-with-kaocha threw" opts))
         (throw)))))
