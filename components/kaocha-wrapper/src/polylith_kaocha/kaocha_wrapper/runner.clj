@@ -9,7 +9,6 @@
    [kaocha.result]
    [kaocha.specs]
    [polylith-kaocha.kaocha-wrapper.config :as config]
-   [polylith-kaocha.kaocha-wrapper.print :as print]
    [slingshot.slingshot :refer [try+]]))
 
 (defn find-root-compilation-error
@@ -20,8 +19,7 @@
       (let [msg (.getMessage e)]
         (cond
           ;; Look for specific compilation errors like "Unable to resolve symbol"
-          (and msg (or (str/includes? msg "Unable to resolve symbol")
-                       (str/includes? msg "CompilerException")))
+          (and msg (str/includes? msg "Unable to resolve symbol"))
           msg
           
           ;; Continue searching up the chain
@@ -34,26 +32,17 @@
 (defn enhanced-error-reporter
   "A reporter that provides better error messages for compilation failures"
   [m]
+  ;; Only handle load errors, let everything else fall through
   (when (and (= :kaocha/fail-type (:type m))
              (= :kaocha.type/ns (:kaocha.testable/type m))
              (:kaocha.testable/load-error m))
     (let [load-error (:kaocha.testable/load-error m)
-          root-error (find-root-compilation-error load-error)
-          enhanced-msg (if (and root-error 
-                                (not (str/includes? root-error "not found")))
-                         (str "Compilation error: " root-error)
-                         "Failed loading tests")]
-      (println "\n" (kaocha.report/colored :red "ERROR") 
-               "in" (:kaocha.testable/id m) 
-               (str "(" (:file m) ":" (:line m) ")"))
-      (println enhanced-msg)
-      (when load-error
-        (println "Original exception:" (class load-error))
-        (when-let [stack-trace (take 5 (.getStackTrace load-error))]
-          (doseq [frame stack-trace]
-            (println " at" frame))))))
+          root-error (find-root-compilation-error load-error)]
+      (when (and root-error (not (str/includes? root-error "not found")))
+        (println "\n💡 Enhanced Error Info:")
+        (println "   Root cause:" root-error))))
   
-  ;; Fall back to default reporting for everything else
+  ;; Always call the default reporter to maintain normal behavior
   (kaocha.report/result m))
 
 (defn with-debug-reporter [kaocha-reporter]
@@ -82,6 +71,12 @@
     (kaocha.plugin/run-hook :kaocha.hooks/post-summary)
     (:kaocha.result/tests)))
 
+(defn verbose-prn [x label {:keys [is-verbose]}]
+  (when is-verbose
+    (println
+      (str "[polylith-kaocha] " label ":")
+      (pr-str x))))
+
 (defn run-with-complete-config [config opts]
   (kaocha.plugin/run-hook :kaocha.hooks/main config)
   (let [{:kaocha.result/keys [error fail]}
@@ -89,7 +84,7 @@
           (run-to-test-results!)
           (doto (when-not (throw (Exception. "Unable to create test summary."))))
           (kaocha.result/totals)
-          (doto (print/verbose-prn "kaocha.result" opts)))]
+          (doto (verbose-prn "kaocha.result" opts)))]
     (+ error fail)))
 
 (defn in-context-runner [opts]
@@ -98,7 +93,6 @@
       (-> config
         (with-verbosity opts)
         (with-color opts)
-        (doto (print/verbose-prn "complete config" opts))
         (run-with-complete-config opts)))))
 
 (defn run-tests-with-kaocha [opts]
@@ -106,15 +100,15 @@
     (config/execute-in-config-context opts (in-context-runner opts))
     (catch :kaocha/early-exit early-exit
       (-> early-exit
-        (doto (print/verbose-prn "kaocha/early-exit" opts))
+        (doto (verbose-prn "kaocha/early-exit" opts))
         (:kaocha/early-exit)))))
 
 (defn run-tests [opts]
   (try
     (->
       (run-tests-with-kaocha opts)
-      (doto (print/verbose-prn "run-tests-with-kaocha" opts)))
+      (doto (verbose-prn "run-tests-with-kaocha" opts)))
     (catch Throwable e
       (-> e
-        (doto (print/verbose-prn "run-tests-with-kaocha threw" opts))
+        (doto (verbose-prn "run-tests-with-kaocha threw" opts))
         (throw)))))
